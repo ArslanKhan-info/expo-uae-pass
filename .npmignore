@@ -1,0 +1,17 @@
+src/
+tsconfig.json
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.git/
+.gitignore
+node_modules/
+*.tsbuildinfo
+EXAMPLE_USAGE.tsx
+.npmignore
+android/
+

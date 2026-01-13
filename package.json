@@ -1,0 +1,67 @@
+{
+  "name": "expo-uae-pass",
+  "version": "1.0.0",
+  "description": "UAE Pass authentication for React Native/Expo apps with support for both app-to-app and web authentication flows",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "uae-pass",
+    "uaepass",
+    "authentication",
+    "oauth",
+    "uae",
+    "digital-id",
+    "expo-plugin",
+    "app-to-app",
+    "webview"
+  ],
+  "author": "Arslan Khan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/expo-uae-pass"
+  },
+  "homepage": "https://github.com/yourusername/expo-uae-pass#readme",
+  "bugs": {
+    "url": "https://github.com/yourusername/expo-uae-pass/issues"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-native": ">=0.70.0",
+    "expo": ">=49.0.0",
+    "expo-linking": "*",
+    "expo-web-browser": "*",
+    "expo-auth-session": "*",
+    "react-native-webview": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-native": "^0.72.0",
+    "typescript": "^5.0.0",
+    "expo": "^54.0.0",
+    "expo-linking": "^7.0.0",
+    "expo-web-browser": "^14.0.0",
+    "expo-auth-session": "^6.0.0",
+    "react-native-webview": "^13.0.0",
+    "react": "^18.0.0",
+    "react-native": "^0.70.0"
+  },
+  "files": [
+    "lib",
+    "expo-plugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "expo": {
+    "name": "expo-uae-pass",
+    "slug": "expo-uae-pass"
+  }
+}
+
