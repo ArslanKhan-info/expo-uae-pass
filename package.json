@@ -1,6 +1,6 @@
 {
   "name": "expo-uae-pass",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "UAE Pass authentication for React Native/Expo apps with support for both app-to-app and web authentication flows",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

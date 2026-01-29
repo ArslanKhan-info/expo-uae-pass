@@ -233,45 +233,50 @@ export const authenticateWithUAEPassBrowser = async (
 ): Promise<UAEPassAuthResult> => {
   console.log('Opening authentication in browser...');
   const config = getUAEPassConfig();
-  
+
+  // Keep subscription ref so we can remove it when user dismisses browser without completing auth
+  const subscriptionRef: { current: { remove: () => void } | null } = { current: null };
+
   // Set up deep link listener BEFORE opening URL
   const authCodePromise = new Promise<UAEPassAuthResult>((resolve) => {
-    const subscription = Linking.addEventListener('url', (event: Linking.EventType) => {
+    subscriptionRef.current = Linking.addEventListener('url', (event: Linking.EventType) => {
       console.log('Deep link received:', event.url);
-      
+
       // Parse the callback URL
       const result = parseCallbackURL(event.url, state);
-      
+
       // Add code verifier to result for PKCE
       if (result.success) {
         result.codeVerifier = codeVerifier;
       }
-      
+
       // Clean up listener
-      subscription.remove();
-      
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
+
       // Resolve with result
       resolve(result);
     });
-    
+
     // Timeout after 5 minutes
     setTimeout(() => {
-      subscription.remove();
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
       resolve({
         success: false,
         error: 'Authentication timeout',
       });
     }, 5 * 60 * 1000);
   });
-  
+
   // Use WebBrowser.openAuthSessionAsync for browser flow
   const browserResult = await WebBrowser.openAuthSessionAsync(
     authUrl,
     config.redirectUri
   );
-  
+
   console.log('Browser result type:', browserResult.type);
-  
+
   // Handle different browser result types
   if (browserResult.type === 'success' && browserResult.url) {
     console.log('✅ Got direct URL from browser:', browserResult.url);
@@ -281,7 +286,7 @@ export const authenticateWithUAEPassBrowser = async (
     }
     return result;
   }
-  
+
   if (browserResult.type === 'cancel') {
     console.log('❌ User cancelled authentication');
     return {
@@ -289,20 +294,25 @@ export const authenticateWithUAEPassBrowser = async (
       error: 'User cancelled authentication',
     };
   }
-  
+
   if (browserResult.type === 'dismiss') {
-    console.log('⏳ Browser dismissed - waiting for deep link callback...');
-    // Browser was dismissed, wait for deep link callback
-    const result = await authCodePromise;
-    return result;
+    // User closed the browser without completing auth (e.g. back button, swipe away).
+    // No deep link will come — treat as cancel so loading state is cleared immediately.
+    console.log('❌ Browser dismissed - user returned without completing auth');
+    subscriptionRef.current?.remove();
+    subscriptionRef.current = null;
+    return {
+      success: false,
+      error: 'User cancelled authentication',
+    };
   }
-  
+
   // Otherwise wait for deep link callback
   console.log('⏳ Waiting for deep link callback...');
   const result = await authCodePromise;
-  
+
   console.log('Authentication result:', result.success ? 'SUCCESS' : 'FAILED');
-  
+
   return result;
 };
 
