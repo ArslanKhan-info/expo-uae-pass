@@ -1,6 +1,6 @@
 {
   "name": "expo-uae-pass",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "UAE Pass authentication for React Native/Expo apps with support for both app-to-app and web authentication flows",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -26,11 +26,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/expo-uae-pass"
+    "url": "https://github.com/ArslanKhan-info/expo-uae-pass"
   },
-  "homepage": "https://github.com/yourusername/expo-uae-pass#readme",
+  "homepage": "https://github.com/ArslanKhan-info/expo-uae-pass#readme",
   "bugs": {
-    "url": "https://github.com/yourusername/expo-uae-pass/issues"
+    "url": "https://github.com/ArslanKhan-info/expo-uae-pass/issues"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

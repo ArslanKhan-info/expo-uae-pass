@@ -165,6 +165,31 @@ function packageToPath(packageName) {
 }
 
 /**
+ * Recursively find a file by name under a directory
+ */
+function findFile(dir, filename) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isFile() && e.name === filename) return full;
+    if (e.isDirectory()) {
+      const found = findFile(full, filename);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Read app package from MainApplication.kt (package declaration)
+ */
+function getPackageFromMainApplication(content) {
+  const m = content.match(/package\s+([\w.]+)/);
+  return m ? m[1] : null;
+}
+
+/**
  * Add UAE Pass native module files to Android project
  */
 function withUAEPassModule(config) {
@@ -172,71 +197,100 @@ function withUAEPassModule(config) {
     'android',
     async (config) => {
       const projectRoot = config.modRequest.projectRoot;
-      const packageName = getPackageName(projectRoot);
-      const packagePath = packageToPath(packageName);
-      
-      const androidProjectPath = path.join(
-        projectRoot,
-        'android',
-        'app',
-        'src',
-        'main',
-        'java',
-        packagePath
-      );
+      const androidSrcRoot = path.join(projectRoot, 'android', 'app', 'src');
 
-      // Ensure directory exists
-      if (!fs.existsSync(androidProjectPath)) {
-        fs.mkdirSync(androidProjectPath, { recursive: true });
+      // 1) Find MainApplication.kt first (Expo/RN can put it under any package path)
+      const mainApplicationPath = findFile(androidSrcRoot, 'MainApplication.kt');
+      let appPackage = null;
+      let mainApplicationContent = '';
+
+      if (mainApplicationPath) {
+        mainApplicationContent = fs.readFileSync(mainApplicationPath, 'utf-8');
+        appPackage = getPackageFromMainApplication(mainApplicationContent);
       }
 
-      // Replace package name placeholder
-      const moduleCode = UAEPassModuleKt.replace(/PACKAGE_NAME_PLACEHOLDER/g, packageName);
-      const packageCode = UAEPassPackageKt.replace(/PACKAGE_NAME_PLACEHOLDER/g, packageName);
+      // 2) Resolve app package: from MainApplication.kt > build.gradle > fallback
+      if (!appPackage) {
+        appPackage = getPackageName(projectRoot);
+      }
+      const uaePassSubpackage = appPackage + '.uaepass';
+      const uaePassPackagePath = packageToPath(uaePassSubpackage);
 
-      // Write UAEPassModule.kt
-      const moduleFilePath = path.join(androidProjectPath, 'UAEPassModule.kt');
-      fs.writeFileSync(moduleFilePath, moduleCode, 'utf-8');
-      console.log('✅ Created UAEPassModule.kt');
+      const androidJavaRoot = path.join(androidSrcRoot, 'main', 'java');
+      const moduleDir = path.join(androidJavaRoot, uaePassPackagePath);
 
-      // Write UAEPassPackage.kt
-      const packageFilePath = path.join(androidProjectPath, 'UAEPassPackage.kt');
-      fs.writeFileSync(packageFilePath, packageCode, 'utf-8');
-      console.log('✅ Created UAEPassPackage.kt');
+      // Ensure directory exists
+      if (!fs.existsSync(moduleDir)) {
+        fs.mkdirSync(moduleDir, { recursive: true });
+      }
 
-      // Try to modify MainApplication.kt to register the package
-      const mainApplicationPath = path.join(androidProjectPath, 'MainApplication.kt');
-      
-      if (fs.existsSync(mainApplicationPath)) {
-        let mainApplicationContent = fs.readFileSync(mainApplicationPath, 'utf-8');
-        
-        const importStatement = `import ${packageName}.UAEPassPackage`;
-        if (!mainApplicationContent.includes(importStatement)) {
-          // Add import after the last existing import
+      // Replace package name placeholder (use uaepass subpackage so we don't overwrite app files)
+      const moduleCode = UAEPassModuleKt.replace(/PACKAGE_NAME_PLACEHOLDER/g, uaePassSubpackage);
+      const packageCode = UAEPassPackageKt.replace(/PACKAGE_NAME_PLACEHOLDER/g, uaePassSubpackage);
+
+      // Write UAEPassModule.kt and UAEPassPackage.kt in subpackage
+      fs.writeFileSync(path.join(moduleDir, 'UAEPassModule.kt'), moduleCode, 'utf-8');
+      fs.writeFileSync(path.join(moduleDir, 'UAEPassPackage.kt'), packageCode, 'utf-8');
+      console.log('✅ Created UAEPassModule.kt and UAEPassPackage.kt in', uaePassSubpackage);
+
+      // 3) Patch MainApplication.kt to register UAEPassPackage
+      const importStatement = `import ${uaePassSubpackage}.UAEPassPackage`;
+      const addStatement = 'packages.add(UAEPassPackage())';
+      const alreadyHasRegistration =
+        mainApplicationContent.includes('UAEPassPackage()') ||
+        mainApplicationContent.includes('UAEPassPackage ()');
+
+      if (!mainApplicationPath) {
+        console.warn('⚠️  MainApplication.kt not found under android/app/src. Please manually register UAEPassPackage.');
+        return config;
+      }
+
+      if (alreadyHasRegistration) {
+        console.log('✅ UAEPassPackage already registered in MainApplication.kt');
+        return config;
+      }
+
+      // Add import after PackageList or any react import (handle \r\n)
+      if (!mainApplicationContent.includes(importStatement)) {
+        if (mainApplicationContent.includes('import com.facebook.react.PackageList')) {
           mainApplicationContent = mainApplicationContent.replace(
-            /import com\.facebook\.react\.soloader\.OpenSourceMergedSoMapping\n/,
-            (match) => `${match}${importStatement}\n`
+            /(import com\.facebook\.react\.PackageList)\s*[\r\n]+/,
+            `$1\n${importStatement}\n`
           );
-        }
-
-        // Inject package registration into getPackages()
-        if (!mainApplicationContent.includes('packages.add(UAEPassPackage())')) {
+        } else if (mainApplicationContent.includes('import com.facebook.react.soloader.OpenSourceMergedSoMapping')) {
           mainApplicationContent = mainApplicationContent.replace(
-            /val packages = PackageList\(this\)\.packages/,
-            'val packages = PackageList(this).packages\n            packages.add(UAEPassPackage())'
+            /(import com\.facebook\.react\.soloader\.OpenSourceMergedSoMapping)\s*[\r\n]+/,
+            `$1\n${importStatement}\n`
           );
-        }
-
-        if (!mainApplicationContent.includes('packages.add(UAEPassPackage())')) {
-          console.warn('⚠️  Could not automatically register UAEPassPackage. Please manually add:');
-          console.warn(`   ${importStatement}`);
-          console.warn('   packages.add(UAEPassPackage())');
         } else {
-          fs.writeFileSync(mainApplicationPath, mainApplicationContent, 'utf-8');
-          console.log('✅ Registered UAEPassPackage in MainApplication.kt');
+          mainApplicationContent = mainApplicationContent.replace(
+            /(package\s+[\w.]+)\s*[\r\n]+\s*[\r\n]+/,
+            `$1\n\n${importStatement}\n\n`
+          );
         }
+      }
+
+      // Register package: insert packages.add(UAEPassPackage()) right after "val packages = PackageList(this).packages"
+      // Works with any number of comment lines between that and "return packages"
+      const valPackagesRegex = /(val packages = PackageList\(this\)\.packages)(\s*[\r\n]+)/;
+      if (valPackagesRegex.test(mainApplicationContent)) {
+        mainApplicationContent = mainApplicationContent.replace(
+          valPackagesRegex,
+          '$1\n            packages.add(UAEPassPackage())$2'
+        );
+        fs.writeFileSync(mainApplicationPath, mainApplicationContent, 'utf-8');
+        console.log('✅ Registered UAEPassPackage in MainApplication.kt');
+      } else if (/PackageList\(this\)\.packages\.apply\s*\{/.test(mainApplicationContent)) {
+        mainApplicationContent = mainApplicationContent.replace(
+          /(PackageList\(this\)\.packages\.apply\s*\{\s*)[\r\n]+/,
+          `$1\n            ${addStatement}\n            `
+        );
+        fs.writeFileSync(mainApplicationPath, mainApplicationContent, 'utf-8');
+        console.log('✅ Registered UAEPassPackage in MainApplication.kt (apply block)');
       } else {
-        console.warn('⚠️  MainApplication.kt not found. Please manually register UAEPassPackage.');
+        console.warn('⚠️  Could not auto-register UAEPassPackage. Add manually to MainApplication.kt:');
+        console.warn(`   ${importStatement}`);
+        console.warn(`   ${addStatement}`);
       }
 
       return config;

@@ -1,13 +1,18 @@
 # expo-uae-pass
 
-UAE Pass authentication for React Native/Expo apps with support for both app-to-app and web authentication flows.
+UAE Pass authentication for React Native/Expo apps with support for **app-to-app** and **app-to-web** flows.
+
+- **App-to-app**: When the UAE Pass app **is installed**, the library opens the UAE Pass app for authentication (better UX, native flow).
+- **App-to-web**: When the UAE Pass app **is not installed**, the library falls back to the browser (web) for authentication.
+
+Both flows are handled by the same API: use `useUAEPassAuth` together with the `UAEPassWebViewAuth` component. This is the only pattern that works correctly for both scenarios.
 
 ## Features
 
 - ✅ Configurable staging and production environments
 - ✅ Automatic detection of UAE Pass app installation
-- ✅ WebView-based app-to-app authentication (when app installed)
-- ✅ Browser-based fallback authentication (when app not installed)
+- ✅ App-to-app: WebView-based flow when UAE Pass app is installed
+- ✅ App-to-web: Browser-based fallback when UAE Pass app is not installed
 - ✅ TypeScript support
 - ✅ Expo config plugin for automatic native module setup
 - ✅ Self-contained with no external project dependencies
@@ -30,16 +35,37 @@ yarn add expo-uae-pass
 
 Add the plugin to your `app.config.js` or `app.json`:
 
+**Option A: Use the combined plugin (recommended)**
+
 ```javascript
 export default {
   expo: {
     plugins: [
       // ... other plugins
-      "expo-uae-pass/expo-plugin/withUAEPassModule"
+      "expo-uae-pass/expo-plugin"    // Includes both required plugins
     ]
   }
 };
 ```
+
+**Option B: Use individual plugins**
+
+```javascript
+export default {
+  expo: {
+    plugins: [
+      // ... other plugins
+      "expo-uae-pass/expo-plugin/withUAEPassModule",    // Native module for app detection
+      "expo-uae-pass/expo-plugin/withAndroidQueries"    // Android 11+ package visibility
+    ]
+  }
+};
+```
+
+**What the plugins do:**
+- `withUAEPassModule` - Creates native modules for checking/launching UAE Pass app
+- `withAndroidQueries` - Adds Android manifest queries (required for Android 11+ to detect installed apps)
+- Combined plugin applies both automatically
 
 ### 2. Configure Deep Links
 
@@ -114,89 +140,68 @@ configureUAEPass({
 
 ## Usage
 
-### Basic Usage with Hook
+### Basic Usage with Hook + WebView (recommended)
 
-```typescript
-import { useUAEPassAuth } from 'expo-uae-pass';
+Use **both** `useUAEPassAuth` and `UAEPassWebViewAuth` together. This is the only way that works correctly for **app-to-app** (UAE Pass app installed) and **app-to-web** (browser fallback).
 
-const LoginScreen = () => {
-  const uaePassAuth = useUAEPassAuth({
-    onSuccess: async (result) => {
-      if (result.success && result.authorizationCode) {
-        // Send authorization code to your backend
-        await socialLoginMutation.mutate({
-          provider: 'uae',
-          id_token: result.authorizationCode,
-          code_verifier: result.codeVerifier,
-          // ... other params
-        });
-      }
-    },
-    onError: (error) => {
-      Alert.alert('Error', error);
-    },
-    onCancel: () => {
-      console.log('User cancelled');
-    },
-  });
-
-  return (
-    <Button
-      title="Login with UAE Pass"
-      onPress={uaePassAuth.authenticate}
-      loading={uaePassAuth.isLoading}
-    />
-  );
-};
-```
-
-### Advanced Usage with WebView Component
-
-When UAE Pass app IS installed, you can use the WebView component for better UX:
+- When UAE Pass app **is installed**: the hook returns `result.details?.useWebView` and you show `UAEPassWebViewAuth` with the returned params; the user completes auth in the app.
+- When UAE Pass app **is not installed**: the hook completes in the browser and returns `result.success && result.authorizationCode`; you exchange the code and continue.
 
 ```typescript
 import { useUAEPassAuth, UAEPassWebViewAuth } from 'expo-uae-pass';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 const LoginScreen = () => {
   const [webViewParams, setWebViewParams] = useState(null);
+  const codeVerifierRef = useRef(undefined);
+
   const uaePassAuth = useUAEPassAuth({
     onSuccess: async (result) => {
       if (result.details?.useWebView) {
-        // Show WebView component
+        // App-to-app: UAE Pass app is installed — show WebView
+        codeVerifierRef.current = result.codeVerifier;
         setWebViewParams({
           visible: true,
           authUrl: result.details.authUrl,
           redirectUri: result.details.redirectUri,
           expectedState: result.details.expectedState,
           onSuccess: (code, state) => {
-            // Handle success
             setWebViewParams(null);
-            console.log('Auth code:', code);
+            exchangeCodeAndLogin(code, codeVerifierRef.current);
           },
-          onCancel: () => {
-            setWebViewParams(null);
-          },
+          onCancel: () => setWebViewParams(null),
           onError: (error) => {
             setWebViewParams(null);
             Alert.alert('Error', error);
           },
         });
-      } else {
-        // Browser flow - already handled
-        console.log('Auth code:', result.authorizationCode);
+      } else if (result.success && result.authorizationCode) {
+        // App-to-web: browser flow — already have the code
+        await exchangeCodeAndLogin(result.authorizationCode, result.codeVerifier);
       }
     },
+    onError: (error) => Alert.alert('Error', error),
+    onCancel: () => console.log('User cancelled'),
   });
+
+  const exchangeCodeAndLogin = async (code, codeVerifier) => {
+    // Exchange code for tokens (prefer doing this on your backend)
+    const tokenResult = await uaePassAuth.exchangeCode({
+      code,
+      codeVerifier,
+      clientSecret: 'YOUR_CLIENT_SECRET', // Prefer backend exchange
+    });
+    // Then call your backend / login mutation with tokenResult or user info
+  };
 
   return (
     <>
       <Button
         title="Login with UAE Pass"
         onPress={uaePassAuth.authenticate}
-        loading={uaePassAuth.isLoading}
+        disabled={uaePassAuth.isLoading}
       />
-      
+      {uaePassAuth.isLoading && <ActivityIndicator />}
       {webViewParams && <UAEPassWebViewAuth {...webViewParams} />}
     </>
   );
@@ -300,12 +305,26 @@ configureUAEPass({
 
 ## Troubleshooting
 
-### Native Module Not Found
+### Native Module Not Found ("UAEPassModule is not available")
 
-If you get "UAEPassModule is not available", make sure:
-1. You've added the expo plugin to `app.config.js`
-2. You've run `npx expo prebuild` or rebuilt your app
-3. The native module files were created in `android/app/src/main/java/...`
+The plugin creates `UAEPassModule.kt` and `UAEPassPackage.kt`, but **the package must be registered in `MainApplication.kt`** or the module won't be available at runtime.
+
+1. **Use only one plugin** in `app.config.js`:
+   ```javascript
+   plugins: ["expo-uae-pass/expo-plugin"]   // This applies both withUAEPassModule and withAndroidQueries
+   ```
+   Do **not** add both `"expo-uae-pass/expo-plugin"` and `"expo-uae-pass/expo-plugin/withUAEPassModule"`.
+
+2. **Check registration in MainApplication.kt**  
+   Open `android/app/src/main/java/<your-package>/MainApplication.kt`. You must have:
+   - An import: `import <your-package>.UAEPassPackage`
+   - Inside the `PackageList(this).packages.apply { }` block (or in `getPackages()`): `add(UAEPassPackage())`
+
+3. **If the plugin didn't patch MainApplication.kt**, add it manually:
+   - Add: `import <your-package>.UAEPassPackage` (e.g. `import com.aradiagent.UAEPassPackage`).
+   - Inside the `apply { }` block (where it says "Packages that cannot be autolinked..."), add a new line: `add(UAEPassPackage())`.
+
+4. Run `npx expo prebuild --clean` and rebuild. If you already prebuilt, update the package to the latest version (with the improved plugin) and run prebuild again, or apply the MainApplication.kt changes manually.
 
 ### Deep Link Not Working
 
